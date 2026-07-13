@@ -1,0 +1,157 @@
+{% extends "base.html" %}
+
+{% block title %}{{ tool.title }} - YBC 工具箱{% endblock %}
+
+{% block content %}
+<div class="tool-page">
+    <div class="tool-header">
+        <a href="/" class="back-link">← 返回工具列表</a>
+        <h1>{{ tool.title }}</h1>
+        <p class="tool-desc">{{ tool.description }}</p>
+        <span class="tool-category-tag">{{ tool.category }}</span>
+    </div>
+
+    <div class="tool-workspace">
+        <div class="input-section">
+            <label>上传文件</label>
+            <div class="file-upload-area" id="file-upload-area">
+                <input type="file" id="file-input" accept=".json,.csv,.xml" hidden>
+                <p class="upload-hint">点击或拖拽文件到此处</p>
+                <p class="upload-formats">支持: JSON, CSV, XML</p>
+                <p id="file-name" class="file-name" style="display:none"></p>
+            </div>
+        </div>
+
+        <div class="controls">
+            <div class="control-group">
+                <label for="target-format">目标格式</label>
+                <select id="target-format">
+                    <option value="csv">CSV</option>
+                    <option value="json">JSON</option>
+                </select>
+            </div>
+            <div class="btn-group">
+                <button id="btn-convert" class="btn btn-primary" disabled>开始转换</button>
+                <button id="btn-reset" class="btn btn-outline">重置</button>
+            </div>
+        </div>
+
+        <div class="result-section">
+            <div class="result-header">
+                <label>转换结果</label>
+                <span id="convert-status" class="status-badge"></span>
+            </div>
+            <div id="convert-result">
+                <p class="placeholder-text">上传文件并选择目标格式后点击 "开始转换"</p>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const uploadArea = document.getElementById('file-upload-area');
+    const fileInput = document.getElementById('file-input');
+    const fileNameEl = document.getElementById('file-name');
+    const formatSelect = document.getElementById('target-format');
+    const btnConvert = document.getElementById('btn-convert');
+    const btnReset = document.getElementById('btn-reset');
+    const resultDiv = document.getElementById('convert-result');
+    const statusBadge = document.getElementById('convert-status');
+    let selectedFile = null;
+
+    // Click to upload
+    uploadArea.addEventListener('click', () => fileInput.click());
+
+    // Drag and drop
+    uploadArea.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        uploadArea.classList.add('drag-over');
+    });
+    uploadArea.addEventListener('dragleave', () => uploadArea.classList.remove('drag-over'));
+    uploadArea.addEventListener('drop', (e) => {
+        e.preventDefault();
+        uploadArea.classList.remove('drag-over');
+        if (e.dataTransfer.files.length > 0) {
+            handleFile(e.dataTransfer.files[0]);
+        }
+    });
+
+    fileInput.addEventListener('change', () => {
+        if (fileInput.files.length > 0) {
+            handleFile(fileInput.files[0]);
+        }
+    });
+
+    function handleFile(file) {
+        selectedFile = file;
+        fileNameEl.textContent = `${file.name} (${(file.size / 1024).toFixed(1)} KB)`;
+        fileNameEl.style.display = 'block';
+        btnConvert.disabled = false;
+
+        // Auto-select target format based on source
+        const ext = file.name.split('.').pop().toLowerCase();
+        if (ext === 'json') formatSelect.value = 'csv';
+        else if (ext === 'csv') formatSelect.value = 'json';
+        else if (ext === 'xml') formatSelect.value = 'json';
+    }
+
+    btnConvert.addEventListener('click', async function() {
+        if (!selectedFile) return;
+
+        btnConvert.disabled = true;
+        btnConvert.textContent = '转换中...';
+        statusBadge.textContent = '正在处理...';
+        statusBadge.className = 'status-badge status-loading';
+
+        const formData = new FormData();
+        formData.append('file', selectedFile);
+        formData.append('format', formatSelect.value);
+
+        try {
+            const resp = await fetch('/api/file/convert', {
+                method: 'POST',
+                body: formData
+            });
+
+            if (resp.ok) {
+                const blob = await resp.blob();
+                const url = URL.createObjectURL(blob);
+                const baseName = selectedFile.name.replace(/\.[^.]+$/, '');
+                const targetExt = formatSelect.value;
+                resultDiv.innerHTML = `
+                    <p class="success-text">转换成功!</p>
+                    <a href="${url}" download="${baseName}.${targetExt}" class="btn btn-primary">下载文件</a>
+                `;
+                statusBadge.textContent = '\u2713 转换成功';
+                statusBadge.className = 'status-badge status-success';
+            } else {
+                const data = await resp.json();
+                resultDiv.innerHTML = `<p class="error-text">${data.message || '转换失败'}</p>`;
+                statusBadge.textContent = '\u2717 失败';
+                statusBadge.className = 'status-badge status-error';
+            }
+        } catch (e) {
+            resultDiv.innerHTML = `<p class="error-text">请求失败: ${e.message}</p>`;
+            statusBadge.textContent = '\u2717 错误';
+            statusBadge.className = 'status-badge status-error';
+        } finally {
+            btnConvert.disabled = false;
+            btnConvert.textContent = '开始转换';
+        }
+    });
+
+    btnReset.addEventListener('click', function() {
+        selectedFile = null;
+        fileInput.value = '';
+        fileNameEl.style.display = 'none';
+        btnConvert.disabled = true;
+        resultDiv.innerHTML = '<p class="placeholder-text">上传文件并选择目标格式后点击 "开始转换"</p>';
+        statusBadge.textContent = '';
+        statusBadge.className = 'status-badge';
+    });
+});
+</script>
+{% endblock %}

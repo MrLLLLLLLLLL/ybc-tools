@@ -1,0 +1,113 @@
+{% extends "base.html" %}
+
+{% block title %}{{ tool.title }} - YBC 工具箱{% endblock %}
+
+{% block content %}
+<div class="tool-page">
+    <div class="tool-header">
+        <a href="/" class="back-link">← 返回工具列表</a>
+        <h1>{{ tool.title }}</h1>
+        <p class="tool-desc">{{ tool.description }}</p>
+        <span class="tool-category-tag">{{ tool.category }}</span>
+    </div>
+
+    <div class="tool-workspace">
+        <div class="input-section">
+            <label for="screenshot-url">目标 URL</label>
+            <input type="url" id="screenshot-url" placeholder="https://example.com" class="text-input">
+        </div>
+
+        <div class="controls">
+            <div class="control-group">
+                <label for="screenshot-width">宽度</label>
+                <input type="number" id="screenshot-width" value="1920" min="320" max="3840" class="number-input">
+            </div>
+            <div class="control-group">
+                <label for="screenshot-height">高度</label>
+                <input type="number" id="screenshot-height" value="1080" min="240" max="2160" class="number-input">
+            </div>
+            <div class="control-group">
+                <label>
+                    <input type="checkbox" id="screenshot-fullpage" checked> 截取整个页面
+                </label>
+            </div>
+            <div class="btn-group">
+                <button id="btn-capture" class="btn btn-primary">开始截图</button>
+            </div>
+        </div>
+
+        <div class="result-section">
+            <div class="result-header">
+                <label>截图结果</label>
+                <span id="screenshot-status" class="status-badge"></span>
+            </div>
+            <div id="screenshot-result" class="screenshot-preview">
+                <p class="placeholder-text">输入 URL 并点击 "开始截图" 查看结果</p>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const urlInput = document.getElementById('screenshot-url');
+    const widthInput = document.getElementById('screenshot-width');
+    const heightInput = document.getElementById('screenshot-height');
+    const fullPageCheck = document.getElementById('screenshot-fullpage');
+    const btnCapture = document.getElementById('btn-capture');
+    const resultDiv = document.getElementById('screenshot-result');
+    const statusBadge = document.getElementById('screenshot-status');
+
+    btnCapture.addEventListener('click', async function() {
+        const url = urlInput.value.trim();
+        if (!url) {
+            statusBadge.textContent = '请输入 URL';
+            statusBadge.className = 'status-badge status-error';
+            return;
+        }
+
+        btnCapture.disabled = true;
+        btnCapture.textContent = '截图中...';
+        statusBadge.textContent = '正在处理...';
+        statusBadge.className = 'status-badge status-loading';
+        resultDiv.innerHTML = '<p class="placeholder-text">正在截图，请稍候...</p>';
+
+        try {
+            const resp = await fetch('/api/selenium/screenshot', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    url: url,
+                    width: parseInt(widthInput.value),
+                    height: parseInt(heightInput.value),
+                    full_page: fullPageCheck.checked
+                })
+            });
+            const data = await resp.json();
+
+            if (data.code === 200) {
+                resultDiv.innerHTML = `
+                    <img src="${data.data.image_url}" alt="截图" class="screenshot-image">
+                    <a href="${data.data.image_url}" download class="btn btn-outline" style="margin-top:12px">下载截图</a>
+                `;
+                statusBadge.textContent = '\u2713 截图成功';
+                statusBadge.className = 'status-badge status-success';
+            } else {
+                resultDiv.innerHTML = `<p class="error-text">${data.message}</p>`;
+                statusBadge.textContent = '\u2717 失败';
+                statusBadge.className = 'status-badge status-error';
+            }
+        } catch (e) {
+            resultDiv.innerHTML = `<p class="error-text">请求失败: ${e.message}</p>`;
+            statusBadge.textContent = '\u2717 错误';
+            statusBadge.className = 'status-badge status-error';
+        } finally {
+            btnCapture.disabled = false;
+            btnCapture.textContent = '开始截图';
+        }
+    });
+});
+</script>
+{% endblock %}
