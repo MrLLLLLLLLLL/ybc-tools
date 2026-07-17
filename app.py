@@ -15,6 +15,10 @@ def create_app():
     # Import and register tool routes
     from tools.registry import get_all_tools
 
+    @app.route('/health')
+    def health():
+        return {'status': 'ok'}
+
     @app.context_processor
     def inject_tools():
         return dict(all_tools=get_all_tools())

@@ -1,66 +1,40 @@
 # YBC 工具箱
 
-在线工具箱合集，Flask + Gunicorn，直接部署在 Linux 服务器。
+本地 Flask 工具合集，提供各类实用在线工具。
 
-## 本地开发
+## 快速启动
 
 ```bash
-python3 -m venv .venv
+cd /Volumes/Data-111/YBC
 source .venv/bin/activate
-pip install -r requirements.txt
 python app.py
 ```
 
-## 服务器部署
+打开浏览器访问 http://localhost:5001
 
-### 首次部署
+## 已有工具
 
-```bash
-# 安装依赖 (CentOS)
-yum install -y git python3
+- **JSON 格式化** - 格式化和验证 JSON 数据
+- **网页截图** - 输入 URL 截取网页截图
+- **文件格式转换** - JSON/CSV/XML 互转
+- **华数华大成绩查询** - 单个/批量查询比赛成绩
 
-# 克隆
-cd /opt && git clone <仓库地址> ybc-tools
-cd ybc-tools
+## 添加新工具
 
-# 配置
-cp .env.example .env
-vi .env  # 改 SECRET_KEY
+1. 在 `tools/` 对应分类目录下创建工具文件
+2. 用 `@register_tool` 装饰器注册
+3. 在 `templates/tools/` 下创建对应 HTML 页面
+4. 重启应用，首页自动显示新工具
 
-# 一键部署
-bash deploy/server.sh
-```
-
-### 后续升级
-
-```bash
-# 方式1: 服务器上执行
-cd /opt/ybc-tools && bash deploy/server.sh
-
-# 方式2: 本地远程执行
-ssh root@<IP> "cd /opt/ybc-tools && bash deploy/server.sh"
-```
-
-### 1panel 反向代理
-
-1panel -> 网站 -> 创建网站 -> 反向代理 -> `http://127.0.0.1:5001`
-
-## 项目结构
+## 目录结构
 
 ```
-├── app.py              # Flask 主应用
-├── wsgi.py             # Gunicorn 入口
-├── config.py           # 配置
-├── version.py          # 版本号
-├── requirements.txt    # 依赖
-├── gunicorn.conf.py    # Gunicorn 配置
-├── deploy/server.sh    # 部署脚本
-├── templates/          # HTML 模板
-├── static/             # CSS/JS
-└── tools/              # 工具实现
+YBC/
+  app.py              # 主程序入口
+  config.py            # 配置
+  requirements.txt     # 依赖
+  tools/               # 工具代码
+  templates/           # HTML 模板
+  static/              # CSS / JS / 图片
+  data/                # 上传 / 输出 / 截图
 ```
-
-## 新增工具
-
-1. `tools/<分类>/` 创建模块，用 `@register_tool` 注册
-2. `templates/tools/` 创建页面模板

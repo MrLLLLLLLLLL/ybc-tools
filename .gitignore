@@ -2,7 +2,11 @@
 __pycache__/
 *.pyc
 .env
-data/
 .DS_Store
 ._*
-/temp
+data/uploads/*
+data/outputs/*
+data/screenshots/*
+!data/uploads/.gitkeep
+!data/outputs/.gitkeep
+!data/screenshots/.gitkeep
