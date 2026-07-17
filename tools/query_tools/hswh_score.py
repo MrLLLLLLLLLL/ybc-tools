@@ -64,7 +64,7 @@ class HswhScoreQuery:
         return ""
 
     def _get_driver_path(self) -> str:
-        if self.driver_path:
+        if self.driver_path and Path(self.driver_path).exists():
             return self.driver_path
         # Docker env var
         env_path = os.environ.get('CHROMEDRIVER_PATH', '')

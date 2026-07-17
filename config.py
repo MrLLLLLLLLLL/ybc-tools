@@ -13,7 +13,7 @@ class Config:
     OUTPUT_FOLDER = os.path.join(DATA_DIR, 'outputs')
     SCREENSHOT_FOLDER = os.path.join(DATA_DIR, 'screenshots')
     MAX_CONTENT_LENGTH = 16 * 1024 * 1024
-    CHROMEDRIVER_PATH = os.getenv('CHROMEDRIVER_PATH', '/usr/bin/chromedriver')
+    CHROMEDRIVER_PATH = os.getenv('CHROMEDRIVER_PATH', '')
     ALLOWED_EXTENSIONS = {'json', 'csv', 'xml', 'txt', 'xlsx', 'pdf', 'png', 'jpg', 'zip', 'tar'}
 
 
