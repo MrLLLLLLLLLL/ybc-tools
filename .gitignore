@@ -10,3 +10,4 @@ data/screenshots/*
 !data/uploads/.gitkeep
 !data/outputs/.gitkeep
 !data/screenshots/.gitkeep
+chromedriver/
