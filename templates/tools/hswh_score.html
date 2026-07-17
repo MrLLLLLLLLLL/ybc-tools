@@ -266,7 +266,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
     function renderTable(results, partial) {
         if (!results || !results.length) { if(!partial) resultDiv.innerHTML = '<p class="placeholder-text">未查询到结果</p>'; return; }
-        const cols = ['ID','账号','查询状态','姓名','证件号','考生编号','赛道','组别','报名时间','市赛结果','省赛','国赛'];
+        const cols = ['ID','账号','查询状态','姓名','证件号','考生编号','赛道','组别','报名时间','市赛结果','省赛','省赛提交链接','国赛'];
         let html = '<div class="table-wrapper"><table><thead><tr>';
         cols.forEach(c => html += '<th>' + c + '</th>');
         html += '</tr></thead><tbody>';
@@ -276,7 +276,10 @@ document.addEventListener('DOMContentLoaded', function() {
                 const v = r[c] || '';
                 let cls = '';
                 if (c === '查询状态') cls = v === '成功' ? 'status-ok' : v === '失败' ? 'status-fail' : 'status-skip';
-                html += '<td class="' + cls + '">' + v + '</td>';
+                let display = v;
+                if (c === '省赛提交链接' && v && v.startsWith('http')) display = '<a href="' + v + '" target="_blank" rel="noopener">打开链接</a>';
+                if (c === '省赛') cls = v === '已提交' ? 'status-ok' : 'status-skip';
+                html += '<td class="' + cls + '">' + display + '</td>';
             });
             html += '</tr>';
         });

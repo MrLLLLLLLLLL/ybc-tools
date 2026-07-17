@@ -1,7 +1,5 @@
 # -*- coding: utf-8 -*-
-import json
 import os
-import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -17,17 +15,26 @@ from tools.registry import register_tool
 
 SITE_URL = "https://hswhds.com/"
 API_BASE = "https://api.hswhds.com/api"
+MAX_RETRIES = 3
 
 OUTPUT_COLUMNS = [
     "ID", "账号", "查询状态", "错误信息", "姓名", "证件号",
-    "考生编号", "赛道", "组别", "报名时间", "市赛结果", "发证时间", "省赛", "国赛",
+    "考生编号", "赛道", "组别", "报名时间", "市赛结果", "发证时间",
+    "省赛", "省赛提交链接", "国赛",
 ]
 
-# Terminal colors
 _GREEN = "\033[92m"
 _RED = "\033[91m"
 _YELLOW = "\033[93m"
 _RESET = "\033[0m"
+
+# Error keywords that indicate wrong password (should NOT retry)
+_PASSWORD_ERROR_KEYWORDS = ["密码", "password", "账号或密码", "用户名或密码", "用户不存在"]
+
+
+def _is_password_error(msg: str) -> bool:
+    msg_lower = msg.lower()
+    return any(kw in msg_lower for kw in _PASSWORD_ERROR_KEYWORDS)
 
 
 @register_tool("query_tools", "成绩查询", "hswh_score", "红色文化大赛成绩查询",
@@ -39,7 +46,7 @@ class HswhScoreQuery:
         self.driver_path = driver_path
         self.chrome_binary = chrome_binary
 
-    # ---- Chrome / ChromeDriver resolution ----
+    # ---- Chrome / ChromeDriver ----
 
     def _get_chrome_binary(self) -> str:
         if self.chrome_binary:
@@ -48,10 +55,8 @@ class HswhScoreQuery:
         if env_bin and Path(env_bin).exists():
             return env_bin
         for p in [
-            "/usr/bin/google-chrome",
-            "/usr/bin/google-chrome-stable",
-            "/usr/bin/chromium",
-            "/usr/bin/chromium-browser",
+            "/usr/bin/google-chrome", "/usr/bin/google-chrome-stable",
+            "/usr/bin/chromium", "/usr/bin/chromium-browser",
             "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
         ]:
             if Path(p).exists():
@@ -65,8 +70,7 @@ class HswhScoreQuery:
         if env_path and Path(env_path).exists():
             return env_path
         for p in [
-            "/usr/bin/chromedriver",
-            "/usr/local/bin/chromedriver",
+            "/usr/bin/chromedriver", "/usr/local/bin/chromedriver",
             "/app/chromedriver/chromedriver",
             str(Path(__file__).parent.parent.parent / "chromedriver" / "chromedriver"),
         ]:
@@ -144,7 +148,7 @@ class HswhScoreQuery:
         auth = self._login(driver, mobile, password)
         signup_resp = self._fetch_json(driver, "/user/signup/index", {}, auth["token"])
         if signup_resp.get("code") != 1:
-            raise RuntimeError(signup_resp.get("msg") or f"读取报名信息失败")
+            raise RuntimeError(signup_resp.get("msg") or "读取报名信息失败")
         signups = (signup_resp.get("data") or {}).get("list") or []
         results = []
         for s in signups:
@@ -174,6 +178,7 @@ class HswhScoreQuery:
             if "score_results" in item:
                 signup = item.get("signup") or {}
                 scores = item.get("score_results") or []
+                p_url = self._pick(signup, "p_url")
                 if not scores:
                     rows.append({
                         "姓名": "", "证件号": "",
@@ -183,12 +188,15 @@ class HswhScoreQuery:
                         "报名时间": self._pick(signup, "time"),
                         "市赛结果": self._pick_result(signup, "has_prize_level_1", default="待公示"),
                         "发证时间": "",
-                        "省赛": self._pick_result(signup, "has_prize_level_2") or ("已开放提交" if self._pick(signup, "p_url") else "未开始"),
+                        "省赛": "已提交" if p_url else "未提交",
+                        "省赛提交链接": p_url,
                         "国赛": self._pick_result(signup, "has_prize_level_3", default="未开始"),
                     })
                 for s in scores:
                     rows.extend(self._flatten([s], signup_ctx=signup))
             else:
+                ctx = signup_ctx or {}
+                p_url = self._pick(item, "p_url") or self._pick(ctx, "p_url")
                 rows.append({
                     "姓名": self._pick(item, "user_login", "name"),
                     "证件号": self._pick(item, "card_no"),
@@ -198,7 +206,8 @@ class HswhScoreQuery:
                     "报名时间": self._pick(item, "time"),
                     "市赛结果": self._pick_result(item, "prize_level_1", "has_prize_level_1", default="待公示"),
                     "发证时间": self._pick(item, "prize_level_1_date"),
-                    "省赛": self._pick_result(item, "prize_level_2", "has_prize_level_2") or ("已开放提交" if self._pick(item or {}, "p_url") or self._pick(signup_ctx or {}, "p_url") else "未开始"),
+                    "省赛": "已提交" if p_url else "未提交",
+                    "省赛提交链接": p_url,
                     "国赛": self._pick_result(item, "prize_level_3", "has_prize_level_3", default="未开始"),
                 })
         return rows
@@ -225,10 +234,10 @@ class HswhScoreQuery:
         finally:
             driver.quit()
 
-    # ---- Multi-threaded batch query ----
+    # ---- Multi-threaded batch query with retry ----
 
     def _query_one_account(self, account: Dict, index: int, total: int) -> List[Dict]:
-        """Query a single account in its own driver. Thread-safe."""
+        """Query a single account with retry. Thread-safe."""
         mobile = account.get("account", "")
         password = account.get("password", "")
         account_id = account.get("id", str(index))
@@ -238,25 +247,42 @@ class HswhScoreQuery:
             print(f"{_YELLOW}{tag} 跳过: 账号或密码为空 ({mobile}){_RESET}", flush=True)
             return [{"ID": account_id, "账号": mobile, "查询状态": "跳过", "错误信息": "账号或密码为空"}]
 
-        print(f"{_YELLOW}{tag} 查询中: {mobile}{_RESET}", flush=True)
-        driver = self._make_driver()
-        try:
-            data = self._query_account(driver, mobile, password)
-            rows = self._flatten(data)
-            result = []
-            for row in rows:
-                result.append({"ID": account_id, "账号": mobile, "查询状态": "成功", "错误信息": "", **row})
-            print(f"{_GREEN}{tag} 成功: {mobile} -> {len(rows)} 条记录{_RESET}", flush=True)
-            return result
-        except Exception as e:
-            print(f"{_RED}{tag} 失败: {mobile} -> {e}{_RESET}", flush=True)
-            return [{"ID": account_id, "账号": mobile, "查询状态": "失败", "错误信息": str(e)}]
-        finally:
-            driver.quit()
+        last_error = ""
+        for attempt in range(1, MAX_RETRIES + 1):
+            suffix = f" (第{attempt}次)" if attempt > 1 else ""
+            print(f"{_YELLOW}{tag} 查询中: {mobile}{suffix}{_RESET}", flush=True)
+            driver = self._make_driver()
+            try:
+                data = self._query_account(driver, mobile, password)
+                rows = self._flatten(data)
+                result = []
+                for row in rows:
+                    result.append({"ID": account_id, "账号": mobile, "查询状态": "成功", "错误信息": "", **row})
+                print(f"{_GREEN}{tag} 成功: {mobile} -> {len(rows)} 条记录{_RESET}", flush=True)
+                return result
+            except Exception as e:
+                last_error = str(e)
+                driver.quit()
+                driver = None
+                # Password error -> no retry
+                if _is_password_error(last_error):
+                    print(f"{_RED}{tag} 失败(密码错误): {mobile} -> {last_error}{_RESET}", flush=True)
+                    return [{"ID": account_id, "账号": mobile, "查询状态": "失败", "错误信息": last_error}]
+                # Other error -> retry
+                if attempt < MAX_RETRIES:
+                    print(f"{_RED}{tag} 失败: {mobile} -> {last_error}, 将重试...{_RESET}", flush=True)
+                    time.sleep(1)
+                else:
+                    print(f"{_RED}{tag} 失败(已重试{MAX_RETRIES}次): {mobile} -> {last_error}{_RESET}", flush=True)
+            finally:
+                if driver:
+                    driver.quit()
+
+        return [{"ID": account_id, "账号": mobile, "查询状态": "失败", "错误信息": last_error}]
 
     def query_batch(self, accounts: List[Dict], progress_callback: Optional[Callable] = None, max_workers: int = 10) -> Dict:
         """
-        Multi-threaded batch query.
+        Multi-threaded batch query with retry.
 
         Args:
             accounts: list of {id, account, password}
@@ -269,7 +295,7 @@ class HswhScoreQuery:
         lock = threading.Lock()
 
         print(f"\n{'='*50}", flush=True)
-        print(f"开始批量查询: 共 {total} 个账号, {max_workers} 个线程", flush=True)
+        print(f"开始批量查询: 共 {total} 个账号, {max_workers} 个线程, 失败重试 {MAX_RETRIES} 次", flush=True)
         print(f"{'='*50}\n", flush=True)
 
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
