@@ -152,6 +152,61 @@ def api_hswh_template():
                      mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 
+# ---- API: Export results as XLSX ----
+
+@bp.route("/api/query/hswh/export", methods=["POST"])
+def api_hswh_export():
+    data = request.json
+    if not data or not data.get("results"):
+        return jsonify({"success": False, "error": "没有可导出的数据"}), 400
+
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+
+    results = data["results"]
+    columns = ["ID", "账号", "查询状态", "错误信息", "姓名", "证件号",
+               "考生编号", "赛道", "组别", "报名时间", "市赛结果", "发证时间", "省赛", "国赛"]
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "成绩查询结果"
+
+    # Header style
+    header_font = Font(bold=True, color="FFFFFF")
+    header_fill = PatternFill(start_color="C0392B", end_color="C0392B", fill_type="solid")
+    thin = Side(style="thin", color="D9D9D9")
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+
+    for col, name in enumerate(columns, 1):
+        cell = ws.cell(row=1, column=col, value=name)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal="center")
+        cell.border = border
+
+    # Data rows
+    green_font = Font(color="10B981", bold=True)
+    red_font = Font(color="EF4444", bold=True)
+    for row_idx, row_data in enumerate(results, 2):
+        for col_idx, col_name in enumerate(columns, 1):
+            cell = ws.cell(row=row_idx, column=col_idx, value=row_data.get(col_name, ""))
+            cell.border = border
+            if col_name == "查询状态":
+                cell.font = green_font if cell.value == "成功" else red_font
+
+    # Auto-fit column widths
+    for col in ws.columns:
+        max_len = max((len(str(c.value or "")) for c in col), default=8)
+        ws.column_dimensions[col[0].column_letter].width = min(max_len + 4, 30)
+
+    import tempfile
+    tmp = tempfile.mktemp(suffix=".xlsx")
+    wb.save(tmp)
+    date_str = __import__("datetime").date.today().isoformat()
+    return send_file(tmp, as_attachment=True, download_name=f"成绩查询结果_{date_str}.xlsx",
+                     mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+
 # ---- API: Tools list ----
 
 @bp.route("/api/tools")

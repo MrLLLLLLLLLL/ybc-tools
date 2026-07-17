@@ -234,18 +234,28 @@ document.addEventListener('DOMContentLoaded', function() {
     // Template download
     document.getElementById('btn-template').addEventListener('click', () => { window.location.href = '/api/query/hswh/template'; });
 
-    // Export
-    btnExport.addEventListener('click', function() {
+    // Export XLSX
+    btnExport.addEventListener('click', async function() {
         if (!lastResults) return;
-        const cols = ['ID','账号','查询状态','错误信息','姓名','证件号','考生编号','赛道','组别','报名时间','市赛结果','发证时间','省赛','国赛'];
-        const header = cols.join(',');
-        const rows = lastResults.map(r => cols.map(c => '"' + (r[c]||'').replace(/"/g,'""') + '"').join(','));
-        const csv = '\uFEFF' + header + '\n' + rows.join('\n');
-        const blob = new Blob([csv], {type:'text/csv;charset=utf-8'});
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
-        a.download = '成绩查询结果_' + new Date().toISOString().slice(0,10) + '.csv';
-        a.click();
+        btnExport.disabled = true;
+        btnExport.textContent = '导出中...';
+        try {
+            const resp = await fetch('/api/query/hswh/export', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({results: lastResults})
+            });
+            if (!resp.ok) throw new Error('导出失败');
+            const blob = await resp.blob();
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = '成绩查询结果_' + new Date().toISOString().slice(0,10) + '.xlsx';
+            a.click();
+        } catch(e) {
+            alert('导出失败: ' + e.message);
+        }
+        btnExport.disabled = false;
+        btnExport.textContent = '导出 Excel';
     });
 
     // Helpers

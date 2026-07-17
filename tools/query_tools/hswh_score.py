@@ -165,7 +165,7 @@ class HswhScoreQuery:
         v = self._pick(r, *keys, default="")
         return default if v in ("", "0", "None") else v
 
-    def _flatten(self, data) -> List[Dict[str, str]]:
+    def _flatten(self, data, signup_ctx=None) -> List[Dict[str, str]]:
         rows = []
         iterable = data if isinstance(data, list) else data.get("results", []) if isinstance(data, dict) else []
         for item in iterable:
@@ -183,11 +183,11 @@ class HswhScoreQuery:
                         "报名时间": self._pick(signup, "time"),
                         "市赛结果": self._pick_result(signup, "has_prize_level_1", default="待公示"),
                         "发证时间": "",
-                        "省赛": self._pick_result(signup, "has_prize_level_2", default="未开始"),
+                        "省赛": self._pick_result(signup, "has_prize_level_2") or ("已开放提交" if self._pick(signup, "p_url") else "未开始"),
                         "国赛": self._pick_result(signup, "has_prize_level_3", default="未开始"),
                     })
                 for s in scores:
-                    rows.extend(self._flatten([s]))
+                    rows.extend(self._flatten([s], signup_ctx=signup))
             else:
                 rows.append({
                     "姓名": self._pick(item, "user_login", "name"),
@@ -198,7 +198,7 @@ class HswhScoreQuery:
                     "报名时间": self._pick(item, "time"),
                     "市赛结果": self._pick_result(item, "prize_level_1", "has_prize_level_1", default="待公示"),
                     "发证时间": self._pick(item, "prize_level_1_date"),
-                    "省赛": self._pick_result(item, "prize_level_2", "has_prize_level_2", default="未开始"),
+                    "省赛": self._pick_result(item, "prize_level_2", "has_prize_level_2") or ("已开放提交" if self._pick(item or {}, "p_url") or self._pick(signup_ctx or {}, "p_url") else "未开始"),
                     "国赛": self._pick_result(item, "prize_level_3", "has_prize_level_3", default="未开始"),
                 })
         return rows
