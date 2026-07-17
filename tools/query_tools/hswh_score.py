@@ -47,6 +47,10 @@ class HswhScoreQuery:
     def _get_chrome_binary(self) -> str:
         if self.chrome_binary:
             return self.chrome_binary
+        # Docker env var
+        env_bin = os.environ.get('CHROME_BIN', '')
+        if env_bin and Path(env_bin).exists():
+            return env_bin
         candidates = [
             "/usr/bin/google-chrome",
             "/usr/bin/google-chrome-stable",
@@ -62,25 +66,40 @@ class HswhScoreQuery:
     def _get_driver_path(self) -> str:
         if self.driver_path:
             return self.driver_path
+        # Docker env var
+        env_path = os.environ.get('CHROMEDRIVER_PATH', '')
+        if env_path and Path(env_path).exists():
+            print(f'使用环境变量 ChromeDriver: {env_path}')
+            return env_path
+
+        # 检查常见路径
+        candidates = [
+            "/usr/bin/chromedriver",
+            "/usr/local/bin/chromedriver", 
+            "/app/chromedriver/chromedriver",
+            str(Path(__file__).parent.parent.parent / "chromedriver" / "chromedriver"),
+        ]
+        for candidate in candidates:
+            if Path(candidate).exists():
+                print(f"找到 ChromeDriver: {candidate}")
+                return candidate
         
         # 尝试自动下载
         try:
             from tools.query_tools.chromedriver_manager import ensure_chromedriver
-            return ensure_chromedriver()
+            path = ensure_chromedriver()
+            if path and Path(path).exists():
+                return path
         except Exception as e:
             print(f"自动下载 ChromeDriver 失败: {e}")
         
-        # 回退到常见路径
-        candidates = [
-            "/usr/bin/chromedriver",
-            "/usr/local/bin/chromedriver",
-            "/opt/ybc-tools/chromedriver/chromedriver",
-        ]
-        for candidate in candidates:
-            if Path(candidate).exists():
-                return candidate
+        # 最后尝试 which
+        import shutil
+        which_path = shutil.which("chromedriver")
+        if which_path:
+            return which_path
         
-        raise RuntimeError("未找到 ChromeDriver，请先运行: python3 tools/query_tools/chromedriver_manager.py")
+        raise RuntimeError("未找到 ChromeDriver，请在容器内执行: apt install chromedriver 或手动下载")
 
     def _make_driver(self, headless: bool = True) -> WebDriver:
         options = Options()
