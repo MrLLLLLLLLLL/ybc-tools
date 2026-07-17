@@ -17,9 +17,16 @@ from urllib.request import Request, urlopen
 
 # 华为云镜像
 HUAWEI_INDEX_URL = "https://repo.huaweicloud.com/chromedriver/.index.json"
-HUAWEI_DOWNLOAD_TEMPLATE = "https://repo.huaweicloud.com/chromedriver/{version}/chromedriver-linux64.zip"
+def _platform_suffix() -> str:
+    import sys
+    if sys.platform == "darwin":
+        import struct
+        return "chromedriver-mac-arm64.zip" if struct.calcsize("P") * 8 == 64 and "arm" in __import__("platform").machine().lower() else "chromedriver-mac-x64.zip"
+    return "chromedriver-linux64.zip"
 
-DRIVER_DIR = Path("/app/chromedriver")
+HUAWEI_DOWNLOAD_TEMPLATE = "https://repo.huaweicloud.com/chromedriver/{version}/" + _platform_suffix()
+
+DRIVER_DIR = Path(__file__).resolve().parent.parent.parent / "chromedriver"
 DRIVER_PATH = DRIVER_DIR / "chromedriver"
 
 
@@ -38,6 +45,9 @@ def detect_chrome_version() -> str:
         ["google-chrome-stable", "--version"],
         ["chromium", "--version"],
         ["chromium-browser", "--version"],
+        # macOS
+        ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "--version"],
+        ["/Applications/Chromium.app/Contents/MacOS/Chromium", "--version"],
     ]:
         m = re.search(r"(\d+\.\d+\.\d+\.\d+)", _run(cmd))
         if m:
@@ -46,8 +56,8 @@ def detect_chrome_version() -> str:
 
 
 def find_system_chromedriver() -> str:
-    """查找系统预装的 chromedriver（apt install chromium-driver 安装的）"""
-    for p in ["/usr/bin/chromedriver", "/usr/local/bin/chromedriver"]:
+    """查找系统预装的 chromedriver"""
+    for p in ["/usr/bin/chromedriver", "/usr/local/bin/chromedriver", "/opt/homebrew/bin/chromedriver"]:
         if Path(p).exists():
             return p
     which = shutil.which("chromedriver")
@@ -79,7 +89,7 @@ def get_best_version_from_huawei(chrome_version: str) -> str:
         available = []
         for ver, info in index.items():
             files = info.get("files", []) if isinstance(info, dict) else []
-            if any("chromedriver-linux64.zip" in str(f) for f in files):
+            if any(_platform_suffix() in str(f) for f in files):
                 available.append(ver)
         if not available:
             return ""
