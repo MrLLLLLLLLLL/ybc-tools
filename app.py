@@ -182,3 +182,103 @@ def api_tools():
 if __name__ == '__main__':
     app = create_app()
     app.run(debug=True, host='0.0.0.0', port=5001)
+
+
+# ---- API: 华数华大成绩查询 ----
+@main_bp.route('/api/query/hswh/single', methods=['POST'])
+def api_hswh_single():
+    """单个账号查询"""
+    data = request.json
+    if not data:
+        return jsonify({'code': 400, 'success': False, 'error': '请提供查询数据'}), 400
+
+    mobile = data.get('mobile', '').strip()
+    password = data.get('password', '').strip()
+    if not mobile or not password:
+        return jsonify({'code': 400, 'success': False, 'error': '请输入账号和密码'}), 400
+
+    try:
+        from tools.query_tools.hswh_score import HswhScoreQuery
+        from flask import current_app
+        query = HswhScoreQuery(
+            driver_path=current_app.config.get('CHROMEDRIVER_PATH', '')
+        )
+        result = query.query_single(mobile, password)
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@main_bp.route('/api/query/hswh/keyword', methods=['POST'])
+def api_hswh_keyword():
+    """按编号查询"""
+    data = request.json
+    if not data:
+        return jsonify({'code': 400, 'success': False, 'error': '请提供查询数据'}), 400
+
+    keyword = data.get('keyword', '').strip()
+    if not keyword:
+        return jsonify({'code': 400, 'success': False, 'error': '请输入编号'}), 400
+
+    try:
+        from tools.query_tools.hswh_score import HswhScoreQuery
+        from flask import current_app
+        query = HswhScoreQuery(
+            driver_path=current_app.config.get('CHROMEDRIVER_PATH', '')
+        )
+        result = query.query_by_keyword(keyword)
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@main_bp.route('/api/query/hswh/batch', methods=['POST'])
+def api_hswh_batch():
+    """批量查询"""
+    if 'file' not in request.files:
+        return jsonify({'code': 400, 'success': False, 'error': '请上传 Excel 文件'}), 400
+
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({'code': 400, 'success': False, 'error': '未选择文件'}), 400
+
+    if not file.filename.endswith(('.xlsx', '.xls')):
+        return jsonify({'code': 400, 'success': False, 'error': '请上传 Excel 文件'}), 400
+
+    try:
+        from tools.query_tools.hswh_score import HswhScoreQuery
+        from flask import current_app
+        import tempfile
+
+        # Save uploaded file
+        with tempfile.NamedTemporaryFile(suffix='.xlsx', delete=False) as tmp:
+            file.save(tmp.name)
+            tmp_path = tmp.name
+
+        # Read accounts from Excel
+        from tools.query_tools.hswh_score import read_batch_accounts
+        accounts = read_batch_accounts(tmp_path)
+
+        # Clean up temp file
+        os.unlink(tmp_path)
+
+        # Query
+        query = HswhScoreQuery(
+            driver_path=current_app.config.get('CHROMEDRIVER_PATH', '')
+        )
+        result = query.query_batch(accounts)
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@main_bp.route('/api/query/hswh/template', methods=['GET'])
+def api_hswh_template():
+    """下载批量查询模板"""
+    from flask import send_file
+    from tools.query_tools.hswh_score import write_template_xlsx
+    import tempfile
+
+    tmp_path = tempfile.mktemp(suffix='.xlsx')
+    write_template_xlsx(tmp_path)
+    return send_file(tmp_path, as_attachment=True, download_name='华数华大成绩查询模板.xlsx', mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')

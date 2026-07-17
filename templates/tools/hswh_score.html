@@ -1,0 +1,312 @@
+{% extends "base.html" %}
+
+{% block title %}{{ tool.title }} - YBC 工具箱{% endblock %}
+
+{% block content %}
+<div class="tool-page">
+    <div class="tool-header">
+        <a href="/" class="back-link">← 返回工具列表</a>
+        <h1>{{ tool.title }}</h1>
+        <p class="tool-desc">{{ tool.description }}</p>
+        <span class="tool-category-tag">{{ tool.category }}</span>
+    </div>
+
+    <div class="tool-workspace">
+        <!-- 查询模式选择 -->
+        <div class="controls">
+            <div class="control-group">
+                <label>查询模式</label>
+                <select id="query-mode">
+                    <option value="single">单个账号查询</option>
+                    <option value="keyword">按编号查询</option>
+                    <option value="batch">批量查询 (Excel)</option>
+                </select>
+            </div>
+        </div>
+
+        <!-- 单个账号查询 -->
+        <div id="mode-single" class="mode-section">
+            <div class="input-section">
+                <label for="mobile">手机号</label>
+                <input type="text" id="mobile" placeholder="请输入手机号" class="text-input">
+            </div>
+            <div class="input-section">
+                <label for="password">密码</label>
+                <input type="password" id="password" placeholder="请输入密码" class="text-input">
+            </div>
+            <div class="btn-group">
+                <button id="btn-single-query" class="btn btn-primary">查询成绩</button>
+            </div>
+        </div>
+
+        <!-- 按编号查询 -->
+        <div id="mode-keyword" class="mode-section" style="display:none">
+            <div class="input-section">
+                <label for="keyword">考生编号/证书编号/身份证号</label>
+                <input type="text" id="keyword" placeholder="请输入编号" class="text-input">
+            </div>
+            <div class="btn-group">
+                <button id="btn-keyword-query" class="btn btn-primary">查询</button>
+            </div>
+        </div>
+
+        <!-- 批量查询 -->
+        <div id="mode-batch" class="mode-section" style="display:none">
+            <div class="input-section">
+                <label>上传 Excel 文件</label>
+                <div class="file-upload-area" id="file-upload-area">
+                    <input type="file" id="file-input" accept=".xlsx,.xls" hidden>
+                    <p class="upload-hint">点击或拖拽 Excel 文件到此处</p>
+                    <p class="upload-formats">表头必须包含: ID、账号、密码</p>
+                    <p id="file-name" class="file-name" style="display:none"></p>
+                </div>
+            </div>
+            <div class="btn-group">
+                <button id="btn-batch-query" class="btn btn-primary" disabled>批量查询</button>
+                <button id="btn-download-template" class="btn btn-outline">下载模板</button>
+            </div>
+        </div>
+
+        <!-- 结果展示 -->
+        <div class="result-section">
+            <div class="result-header">
+                <label>查询结果</label>
+                <span id="query-status" class="status-badge"></span>
+                <button id="btn-export" class="btn btn-outline" style="display:none">导出 Excel</button>
+            </div>
+            <div id="query-result">
+                <p class="placeholder-text">请选择查询模式并输入信息后查询</p>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const queryMode = document.getElementById('query-mode');
+    const modeSingle = document.getElementById('mode-single');
+    const modeKeyword = document.getElementById('mode-keyword');
+    const modeBatch = document.getElementById('mode-batch');
+    const resultDiv = document.getElementById('query-result');
+    const statusBadge = document.getElementById('query-status');
+    const btnExport = document.getElementById('btn-export');
+
+    let lastResults = null;
+
+    // 模式切换
+    queryMode.addEventListener('change', function() {
+        modeSingle.style.display = this.value === 'single' ? '' : 'none';
+        modeKeyword.style.display = this.value === 'keyword' ? '' : 'none';
+        modeBatch.style.display = this.value === 'batch' ? '' : 'none';
+    });
+
+    // 单个查询
+    document.getElementById('btn-single-query').addEventListener('click', async function() {
+        const mobile = document.getElementById('mobile').value.trim();
+        const password = document.getElementById('password').value.trim();
+        if (!mobile || !password) {
+            statusBadge.textContent = '请输入账号密码';
+            statusBadge.className = 'status-badge status-error';
+            return;
+        }
+        await doQuery('/api/query/hswh/single', { mobile, password });
+    });
+
+    // 编号查询
+    document.getElementById('btn-keyword-query').addEventListener('click', async function() {
+        const keyword = document.getElementById('keyword').value.trim();
+        if (!keyword) {
+            statusBadge.textContent = '请输入编号';
+            statusBadge.className = 'status-badge status-error';
+            return;
+        }
+        await doQuery('/api/query/hswh/keyword', { keyword });
+    });
+
+    // 批量查询
+    const uploadArea = document.getElementById('file-upload-area');
+    const fileInput = document.getElementById('file-input');
+    const fileNameEl = document.getElementById('file-name');
+    const btnBatchQuery = document.getElementById('btn-batch-query');
+    let selectedFile = null;
+
+    uploadArea.addEventListener('click', () => fileInput.click());
+    uploadArea.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        uploadArea.classList.add('drag-over');
+    });
+    uploadArea.addEventListener('dragleave', () => uploadArea.classList.remove('drag-over'));
+    uploadArea.addEventListener('drop', (e) => {
+        e.preventDefault();
+        uploadArea.classList.remove('drag-over');
+        if (e.dataTransfer.files.length > 0) handleFile(e.dataTransfer.files[0]);
+    });
+    fileInput.addEventListener('change', () => {
+        if (fileInput.files.length > 0) handleFile(fileInput.files[0]);
+    });
+
+    function handleFile(file) {
+        selectedFile = file;
+        fileNameEl.textContent = `${file.name} (${(file.size / 1024).toFixed(1)} KB)`;
+        fileNameEl.style.display = 'block';
+        btnBatchQuery.disabled = false;
+    }
+
+    btnBatchQuery.addEventListener('click', async function() {
+        if (!selectedFile) return;
+        const formData = new FormData();
+        formData.append('file', selectedFile);
+        await doQuery('/api/query/hswh/batch', formData, true);
+    });
+
+    // 下载模板
+    document.getElementById('btn-download-template').addEventListener('click', async function() {
+        window.location.href = '/api/query/hswh/template';
+    });
+
+    // 导出 Excel
+    btnExport.addEventListener('click', function() {
+        if (!lastResults) return;
+        exportToExcel(lastResults);
+    });
+
+    // 执行查询
+    async function doQuery(url, data, isFormData = false) {
+        statusBadge.textContent = '查询中...';
+        statusBadge.className = 'status-badge status-loading';
+        resultDiv.innerHTML = '<p class="placeholder-text">正在查询，请稍候...</p>';
+        btnExport.style.display = 'none';
+
+        try {
+            const options = { method: 'POST' };
+            if (isFormData) {
+                options.body = data;
+            } else {
+                options.headers = { 'Content-Type': 'application/json' };
+                options.body = JSON.stringify(data);
+            }
+
+            const resp = await fetch(url, options);
+            const result = await resp.json();
+
+            if (result.success) {
+                lastResults = result.results || [];
+                renderResults(lastResults);
+                statusBadge.textContent = `✓ 查询成功 (${lastResults.length} 条)`;
+                statusBadge.className = 'status-badge status-success';
+                if (lastResults.length > 0) btnExport.style.display = '';
+            } else {
+                resultDiv.innerHTML = `<p class="error-text">${result.error || '查询失败'}</p>`;
+                statusBadge.textContent = '✗ 失败';
+                statusBadge.className = 'status-badge status-error';
+            }
+        } catch (e) {
+            resultDiv.innerHTML = `<p class="error-text">请求失败: ${e.message}</p>`;
+            statusBadge.textContent = '✗ 错误';
+            statusBadge.className = 'status-badge status-error';
+        }
+    }
+
+    // 渲染结果表格
+    function renderResults(results) {
+        if (!results || results.length === 0) {
+            resultDiv.innerHTML = '<p class="placeholder-text">未查询到结果</p>';
+            return;
+        }
+
+        const columns = ['姓名', '证件号', '考生编号', '赛道', '组别', '报名时间', '市赛结果', '发证时间', '省赛', '国赛'];
+        const hasAccount = results[0].hasOwnProperty('账号');
+        const displayCols = hasAccount ? ['ID', '账号', '查询状态', ...columns] : columns;
+
+        let html = '<div class="table-wrapper"><table><thead><tr>';
+        displayCols.forEach(col => html += `<th>${col}</th>`);
+        html += '</tr></thead><tbody>';
+
+        results.forEach(row => {
+            html += '<tr>';
+            displayCols.forEach(col => {
+                const val = row[col] || '';
+                const cls = col === '查询状态' ? (val === '成功' ? 'status-ok' : 'status-fail') : '';
+                html += `<td class="${cls}">${val}</td>`;
+            });
+            html += '</tr>';
+        });
+
+        html += '</tbody></table></div>';
+        resultDiv.innerHTML = html;
+    }
+
+    // 导出 Excel
+    function exportToExcel(results) {
+        // 简单的 CSV 导出
+        const columns = ['ID', '账号', '查询状态', '错误信息', '姓名', '证件号', '考生编号', '赛道', '组别', '报名时间', '市赛结果', '发证时间', '省赛', '国赛'];
+        const header = columns.join(',');
+        const rows = results.map(row => columns.map(col => `"${(row[col] || '').replace(/"/g, '""')}"`).join(','));
+        const csv = '\uFEFF' + header + '\n' + rows.join('\n');
+
+        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `成绩查询结果_${new Date().toISOString().slice(0,10)}.csv`;
+        a.click();
+        URL.revokeObjectURL(url);
+    }
+});
+</script>
+
+<style>
+.mode-section {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    padding: 20px;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+}
+
+.table-wrapper {
+    overflow-x: auto;
+    max-height: 500px;
+    overflow-y: auto;
+}
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85rem;
+}
+
+th, td {
+    padding: 10px 12px;
+    text-align: left;
+    border-bottom: 1px solid var(--color-border);
+    white-space: nowrap;
+}
+
+th {
+    background: var(--color-bg);
+    font-weight: 600;
+    position: sticky;
+    top: 0;
+    z-index: 1;
+}
+
+tr:hover td {
+    background: var(--color-primary-light);
+}
+
+.status-ok {
+    color: var(--color-success);
+    font-weight: 600;
+}
+
+.status-fail {
+    color: var(--color-error);
+    font-weight: 600;
+}
+</style>
+{% endblock %}
