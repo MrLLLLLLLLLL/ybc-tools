@@ -1,240 +1,182 @@
+# -*- coding: utf-8 -*-
 import json
 import os
-import platform
-import re
-import shutil
-import subprocess
-import tempfile
-import zipfile
+import sys
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Any, Dict, List, Optional
-from urllib.request import Request, urlopen
+from typing import Any, Callable, Dict, List, Optional
 
 from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.remote.webdriver import WebDriver
 
 from tools.registry import register_tool
 
-
 SITE_URL = "https://hswhds.com/"
 API_BASE = "https://api.hswhds.com/api"
-ALIYUN_CFT_MIRRORS = [
-    "https://npmmirror.com/mirrors/chrome-for-testing",
-    "https://registry.npmmirror.com/-/binary/chrome-for-testing",
-]
-OFFICIAL_CFT_MILESTONE_VERSIONS_URL = (
-    "https://googlechromelabs.github.io/chrome-for-testing/"
-    "latest-versions-per-milestone-with-downloads.json"
-)
 
 OUTPUT_COLUMNS = [
     "ID", "账号", "查询状态", "错误信息", "姓名", "证件号",
-    "考生编号", "赛道", "组别", "报名时间", "市赛结果", "发证时间", "省赛", "国赛"
+    "考生编号", "赛道", "组别", "报名时间", "市赛结果", "发证时间", "省赛", "国赛",
 ]
 
+# Terminal colors
+_GREEN = "\033[92m"
+_RED = "\033[91m"
+_YELLOW = "\033[93m"
+_RESET = "\033[0m"
 
-@register_tool('query_tools', '成绩查询', 'hswh_score', '华数华大成绩查询', '查询 hswhds.com 比赛成绩，支持单个和批量查询', icon='search')
+
+@register_tool("query_tools", "成绩查询", "hswh_score", "红色文化大赛成绩查询",
+               "查询比赛成绩，支持单个、按编号和批量查询", icon="search")
 class HswhScoreQuery:
-    """华数华大成绩查询工具"""
+    """红色文化大赛成绩查询工具"""
 
     def __init__(self, driver_path: str = "", chrome_binary: str = ""):
         self.driver_path = driver_path
         self.chrome_binary = chrome_binary
-        self._driver = None
+
+    # ---- Chrome / ChromeDriver resolution ----
 
     def _get_chrome_binary(self) -> str:
         if self.chrome_binary:
             return self.chrome_binary
-        # Docker env var
-        env_bin = os.environ.get('CHROME_BIN', '')
+        env_bin = os.environ.get("CHROME_BIN", "")
         if env_bin and Path(env_bin).exists():
             return env_bin
-        candidates = [
+        for p in [
             "/usr/bin/google-chrome",
             "/usr/bin/google-chrome-stable",
             "/usr/bin/chromium",
             "/usr/bin/chromium-browser",
             "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-        ]
-        for candidate in candidates:
-            if Path(candidate).exists():
-                return candidate
+        ]:
+            if Path(p).exists():
+                return p
         return ""
 
     def _get_driver_path(self) -> str:
         if self.driver_path and Path(self.driver_path).exists():
             return self.driver_path
-        # Docker env var
-        env_path = os.environ.get('CHROMEDRIVER_PATH', '')
+        env_path = os.environ.get("CHROMEDRIVER_PATH", "")
         if env_path and Path(env_path).exists():
-            print(f'使用环境变量 ChromeDriver: {env_path}')
             return env_path
-
-        # 检查常见路径
-        candidates = [
+        for p in [
             "/usr/bin/chromedriver",
-            "/usr/local/bin/chromedriver", 
+            "/usr/local/bin/chromedriver",
             "/app/chromedriver/chromedriver",
             str(Path(__file__).parent.parent.parent / "chromedriver" / "chromedriver"),
-        ]
-        for candidate in candidates:
-            if Path(candidate).exists():
-                print(f"找到 ChromeDriver: {candidate}")
-                return candidate
-        
-        # 尝试自动下载
+        ]:
+            if Path(p).exists():
+                return p
         try:
             from tools.query_tools.chromedriver_manager import ensure_chromedriver
             path = ensure_chromedriver()
             if path and Path(path).exists():
                 return path
-        except Exception as e:
-            print(f"自动下载 ChromeDriver 失败: {e}")
-        
-        # 最后尝试 which
+        except Exception:
+            pass
         import shutil
-        which_path = shutil.which("chromedriver")
-        if which_path:
-            return which_path
-        
-        raise RuntimeError("未找到 ChromeDriver，请在容器内执行: apt install chromedriver 或手动下载")
+        w = shutil.which("chromedriver")
+        if w:
+            return w
+        raise RuntimeError("未找到 ChromeDriver")
 
-    def _make_driver(self, headless: bool = True) -> WebDriver:
+    def _make_driver(self) -> WebDriver:
         options = Options()
         options.page_load_strategy = "eager"
         binary = self._get_chrome_binary()
         if binary:
             options.binary_location = binary
-        if headless:
-            options.add_argument("--headless=new")
+        options.add_argument("--headless=new")
         options.add_argument("--window-size=1440,1100")
         options.add_argument("--disable-gpu")
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
         options.add_argument("--lang=zh-CN")
-
         service = Service(self._get_driver_path())
         driver = webdriver.Chrome(service=service, options=options)
         driver.set_page_load_timeout(20)
         return driver
 
-    def _fetch_json(self, driver: WebDriver, path: str, payload: Optional[Dict[str, Any]], token: str = "") -> Dict[str, Any]:
+    # ---- Selenium helpers ----
+
+    def _fetch_json(self, driver: WebDriver, path: str, payload: Optional[Dict], token: str = "") -> Dict:
         url = f"{API_BASE}{path}"
         script = """
             const [url, payload, token, done] = arguments;
-            const headers = {
-                "Content-Type": "application/json",
-                "XX-Device-Type": "wxapp"
-            };
+            const headers = {"Content-Type": "application/json", "XX-Device-Type": "wxapp"};
             if (token) headers["XX-Token"] = token;
-            fetch(url, {
-                method: "POST",
-                headers,
-                body: JSON.stringify(payload || {})
-            })
-            .then(async response => {
-                const text = await response.text();
-                try {
-                    done(JSON.parse(text));
-                } catch (error) {
-                    done({ code: -1, msg: "Invalid JSON response", raw: text });
-                }
-            })
-            .catch(error => done({ code: -1, msg: String(error) }));
+            fetch(url, {method:"POST", headers, body: JSON.stringify(payload||{})})
+            .then(async r => { try { done(JSON.parse(await r.text())); } catch(e) { done({code:-1,msg:"Invalid JSON"}); } })
+            .catch(e => done({code:-1, msg:String(e)}));
         """
         result = driver.execute_async_script(script, url, payload or {}, token)
-        if not isinstance(result, dict):
-            return {"code": -1, "msg": "Unexpected fetch result", "raw": result}
-        return result
+        return result if isinstance(result, dict) else {"code": -1, "msg": str(result)}
 
-    def _login(self, driver: WebDriver, mobile: str, password: str) -> Dict[str, Any]:
+    def _login(self, driver: WebDriver, mobile: str, password: str) -> Dict:
         driver.get(SITE_URL)
         driver.execute_script("localStorage.clear(); sessionStorage.clear();")
-        response = self._fetch_json(
-            driver,
-            "/user/login/login",
-            {"mobile": mobile, "password": password, "isagree": 1},
-        )
-        if response.get("code") != 1:
-            raise RuntimeError(response.get("msg") or f"登录失败: {response}")
-
-        data = response.get("data") or {}
+        resp = self._fetch_json(driver, "/user/login/login", {"mobile": mobile, "password": password, "isagree": 1})
+        if resp.get("code") != 1:
+            raise RuntimeError(resp.get("msg") or f"登录失败: {resp}")
+        data = resp.get("data") or {}
         token = data.get("token") or ""
-        user_info = data.get("user_info") or {}
         if not token:
-            raise RuntimeError(f"登录成功响应中没有 token: {response}")
-
+            raise RuntimeError(f"登录响应没有 token: {resp}")
         driver.execute_script(
-            """
-            localStorage.setItem('token', arguments[0]);
-            localStorage.setItem('userInfo', JSON.stringify(arguments[1] || {}));
-            """,
-            token,
-            user_info,
+            "localStorage.setItem('token',arguments[0]);localStorage.setItem('userInfo',JSON.stringify(arguments[1]||{}));",
+            token, data.get("user_info") or {},
         )
-        return {"token": token, "user_info": user_info}
+        return {"token": token, "user_info": data.get("user_info") or {}}
 
-    def _query_keyword(self, driver: WebDriver, keyword: str) -> List[Dict[str, Any]]:
-        response = self._fetch_json(driver, "/home/index/query", {"keywords": keyword})
-        if response.get("code") != 1:
-            raise RuntimeError(response.get("msg") or f"查询失败: {response}")
-        data = response.get("data") or []
+    def _query_keyword(self, driver: WebDriver, keyword: str) -> List[Dict]:
+        resp = self._fetch_json(driver, "/home/index/query", {"keywords": keyword})
+        if resp.get("code") != 1:
+            raise RuntimeError(resp.get("msg") or f"查询失败: {resp}")
+        data = resp.get("data") or []
         return data if isinstance(data, list) else [data]
 
-    def _query_account_scores(self, driver: WebDriver, mobile: str, password: str) -> Dict[str, Any]:
+    def _query_account(self, driver: WebDriver, mobile: str, password: str) -> Dict:
         auth = self._login(driver, mobile, password)
-        signup_response = self._fetch_json(driver, "/user/signup/index", {}, auth["token"])
-        if signup_response.get("code") != 1:
-            raise RuntimeError(signup_response.get("msg") or f"读取报名信息失败: {signup_response}")
-
-        signups = (signup_response.get("data") or {}).get("list") or []
+        signup_resp = self._fetch_json(driver, "/user/signup/index", {}, auth["token"])
+        if signup_resp.get("code") != 1:
+            raise RuntimeError(signup_resp.get("msg") or f"读取报名信息失败")
+        signups = (signup_resp.get("data") or {}).get("list") or []
         results = []
-        for signup in signups:
-            signup_no = str(signup.get("signup_no") or "").strip()
-            if not signup_no:
-                results.append({"signup": signup, "score_results": []})
-                continue
-            results.append({
-                "signup": signup,
-                "score_results": self._query_keyword(driver, signup_no),
-            })
+        for s in signups:
+            no = str(s.get("signup_no") or "").strip()
+            results.append({"signup": s, "score_results": self._query_keyword(driver, no) if no else []})
+        return {"user_info": auth.get("user_info") or {}, "signups": signups, "results": results}
 
-        return {
-            "user_info": auth.get("user_info") or {},
-            "signups": signups,
-            "results": results,
-        }
+    # ---- Result flattening ----
 
-    def _pick(self, record: Dict[str, Any], *keys: str, default: str = "") -> str:
-        for key in keys:
-            value = record.get(key)
-            if value not in (None, ""):
-                return str(value)
+    def _pick(self, r: Dict, *keys, default=""):
+        for k in keys:
+            v = r.get(k)
+            if v not in (None, ""):
+                return str(v)
         return default
 
-    def _pick_result(self, record: Dict[str, Any], *keys: str, default: str = "") -> str:
-        value = self._pick(record, *keys, default="")
-        return default if value in ("", "0", "None") else value
+    def _pick_result(self, r: Dict, *keys, default=""):
+        v = self._pick(r, *keys, default="")
+        return default if v in ("", "0", "None") else v
 
-    def _flatten_results(self, data: Any) -> List[Dict[str, str]]:
+    def _flatten(self, data) -> List[Dict[str, str]]:
         rows = []
-        if isinstance(data, list):
-            iterable = data
-        else:
-            iterable = data.get("results", []) if isinstance(data, dict) else []
-
+        iterable = data if isinstance(data, list) else data.get("results", []) if isinstance(data, dict) else []
         for item in iterable:
             if not isinstance(item, dict):
                 continue
             if "score_results" in item:
                 signup = item.get("signup") or {}
-                score_results = item.get("score_results") or []
-                if not score_results:
+                scores = item.get("score_results") or []
+                if not scores:
                     rows.append({
-                        "姓名": "",
-                        "证件号": "",
+                        "姓名": "", "证件号": "",
                         "考生编号": self._pick(signup, "signup_no"),
                         "赛道": self._pick(signup, "road_name"),
                         "组别": self._pick(signup, "groups_name"),
@@ -244,8 +186,8 @@ class HswhScoreQuery:
                         "省赛": self._pick_result(signup, "has_prize_level_2", default="未开始"),
                         "国赛": self._pick_result(signup, "has_prize_level_3", default="未开始"),
                     })
-                for score in score_results:
-                    rows.extend(self._flatten_results([score]))
+                for s in scores:
+                    rows.extend(self._flatten([s]))
             else:
                 rows.append({
                     "姓名": self._pick(item, "user_login", "name"),
@@ -261,143 +203,148 @@ class HswhScoreQuery:
                 })
         return rows
 
-    def query_single(self, mobile: str, password: str) -> Dict[str, Any]:
-        """查询单个账号成绩"""
+    # ---- Single / keyword queries ----
+
+    def query_single(self, mobile: str, password: str) -> Dict:
         driver = self._make_driver()
         try:
-            data = self._query_account_scores(driver, mobile, password)
-            rows = self._flatten_results(data)
-            return {
-                "success": True,
-                "user_info": data.get("user_info"),
-                "results": rows,
-            }
+            data = self._query_account(driver, mobile, password)
+            return {"success": True, "user_info": data.get("user_info"), "results": self._flatten(data)}
         except Exception as e:
             return {"success": False, "error": str(e)}
         finally:
             driver.quit()
 
-    def query_by_keyword(self, keyword: str) -> Dict[str, Any]:
-        """按编号查询"""
+    def query_by_keyword(self, keyword: str) -> Dict:
         driver = self._make_driver()
         try:
             driver.get(SITE_URL)
-            data = self._query_keyword(driver, keyword)
-            rows = self._flatten_results(data)
-            return {
-                "success": True,
-                "results": rows,
-            }
+            return {"success": True, "results": self._flatten(self._query_keyword(driver, keyword))}
         except Exception as e:
             return {"success": False, "error": str(e)}
         finally:
             driver.quit()
 
-    def query_batch(self, accounts: List[Dict[str, str]]) -> Dict[str, Any]:
-        """批量查询"""
+    # ---- Multi-threaded batch query ----
+
+    def _query_one_account(self, account: Dict, index: int, total: int) -> List[Dict]:
+        """Query a single account in its own driver. Thread-safe."""
+        mobile = account.get("account", "")
+        password = account.get("password", "")
+        account_id = account.get("id", str(index))
+        tag = f"[{index}/{total}]"
+
+        if not mobile or not password:
+            print(f"{_YELLOW}{tag} 跳过: 账号或密码为空 ({mobile}){_RESET}", flush=True)
+            return [{"ID": account_id, "账号": mobile, "查询状态": "跳过", "错误信息": "账号或密码为空"}]
+
+        print(f"{_YELLOW}{tag} 查询中: {mobile}{_RESET}", flush=True)
         driver = self._make_driver()
-        all_results = []
         try:
-            for i, account in enumerate(accounts, 1):
-                mobile = account.get("account", "")
-                password = account.get("password", "")
-                account_id = account.get("id", str(i))
-
-                if not mobile or not password:
-                    all_results.append({
-                        "ID": account_id,
-                        "账号": mobile,
-                        "查询状态": "失败",
-                        "错误信息": "账号或密码为空",
-                    })
-                    continue
-
-                try:
-                    data = self._query_account_scores(driver, mobile, password)
-                    rows = self._flatten_results(data)
-                    for row in rows:
-                        all_results.append({
-                            "ID": account_id,
-                            "账号": mobile,
-                            "查询状态": "成功",
-                            "错误信息": "",
-                            **row,
-                        })
-                except Exception as e:
-                    all_results.append({
-                        "ID": account_id,
-                        "账号": mobile,
-                        "查询状态": "失败",
-                        "错误信息": str(e),
-                    })
-
-            return {
-                "success": True,
-                "total": len(accounts),
-                "results": all_results,
-            }
+            data = self._query_account(driver, mobile, password)
+            rows = self._flatten(data)
+            result = []
+            for row in rows:
+                result.append({"ID": account_id, "账号": mobile, "查询状态": "成功", "错误信息": "", **row})
+            print(f"{_GREEN}{tag} 成功: {mobile} -> {len(rows)} 条记录{_RESET}", flush=True)
+            return result
         except Exception as e:
-            return {"success": False, "error": str(e)}
+            print(f"{_RED}{tag} 失败: {mobile} -> {e}{_RESET}", flush=True)
+            return [{"ID": account_id, "账号": mobile, "查询状态": "失败", "错误信息": str(e)}]
         finally:
             driver.quit()
 
+    def query_batch(self, accounts: List[Dict], progress_callback: Optional[Callable] = None, max_workers: int = 10) -> Dict:
+        """
+        Multi-threaded batch query.
 
-# Helper functions for batch query
+        Args:
+            accounts: list of {id, account, password}
+            progress_callback: called as progress_callback(completed, total, partial_results)
+            max_workers: number of threads (default 10)
+        """
+        total = len(accounts)
+        all_results = []
+        completed = 0
+        lock = threading.Lock()
+
+        print(f"\n{'='*50}", flush=True)
+        print(f"开始批量查询: 共 {total} 个账号, {max_workers} 个线程", flush=True)
+        print(f"{'='*50}\n", flush=True)
+
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            future_map = {
+                pool.submit(self._query_one_account, acct, i + 1, total): i
+                for i, acct in enumerate(accounts)
+            }
+            for future in as_completed(future_map):
+                try:
+                    rows = future.result()
+                except Exception as e:
+                    idx = future_map[future]
+                    rows = [{"ID": accounts[idx].get("id", ""), "账号": accounts[idx].get("account", ""),
+                             "查询状态": "失败", "错误信息": str(e)}]
+                with lock:
+                    all_results.extend(rows)
+                    completed += 1
+                    if progress_callback:
+                        progress_callback(completed, total, list(all_results))
+
+        print(f"\n{'='*50}", flush=True)
+        ok = sum(1 for r in all_results if r.get("查询状态") == "成功")
+        fail = sum(1 for r in all_results if r.get("查询状态") == "失败")
+        skip = sum(1 for r in all_results if r.get("查询状态") == "跳过")
+        print(f"查询完成: 成功 {ok}, 失败 {fail}, 跳过 {skip}, 共 {len(all_results)} 条记录", flush=True)
+        print(f"{'='*50}\n", flush=True)
+
+        return {"success": True, "total": total, "results": all_results}
+
+
+# ---- Excel helpers ----
+
 def read_batch_accounts(xlsx_path: str) -> List[Dict[str, str]]:
-    """读取批量查询 Excel"""
     from openpyxl import load_workbook
-
-    INPUT_COLUMNS = {"ID": "id", "账号": "account", "密码": "password"}
-    workbook = load_workbook(xlsx_path, read_only=True, data_only=True)
-    sheet = workbook.active
-    rows = sheet.iter_rows(values_only=True)
-
+    COL_MAP = {"ID": "id", "账号": "account", "密码": "password"}
+    wb = load_workbook(xlsx_path, read_only=True, data_only=True)
+    ws = wb.active
+    rows = ws.iter_rows(values_only=True)
     try:
-        headers = [str(value).strip() if value else "" for value in next(rows)]
+        headers = [str(v).strip() if v else "" for v in next(rows)]
     except StopIteration:
-        raise RuntimeError("Excel 表格为空，请至少填写表头：ID、账号、密码")
-
-    column_indexes = {}
-    for index, header in enumerate(headers):
-        field = INPUT_COLUMNS.get(header)
-        if field:
-            column_indexes[field] = index
-
-    missing = [name for name, field in [("ID", "id"), ("账号", "account"), ("密码", "password")] if field not in column_indexes]
+        raise RuntimeError("Excel 表格为空")
+    col_idx = {}
+    for i, h in enumerate(headers):
+        if h in COL_MAP:
+            col_idx[COL_MAP[h]] = i
+    missing = [n for n, f in COL_MAP.items() if f not in col_idx]
     if missing:
-        raise RuntimeError(f"Excel 表头缺少列：{', '.join(missing)}。第一行必须包含 ID、账号、密码。")
-
+        raise RuntimeError(f"Excel 表头缺少: {', '.join(missing)}，需要 ID、账号、密码")
     accounts = []
-    for line_no, row in enumerate(rows, start=2):
-        row_values = list(row)
+    for row in rows:
+        vals = list(row)
         item = {
-            "id": str(row_values[column_indexes["id"]]).strip() if column_indexes["id"] < len(row_values) and row_values[column_indexes["id"]] else "",
-            "account": str(row_values[column_indexes["account"]]).strip() if column_indexes["account"] < len(row_values) and row_values[column_indexes["account"]] else "",
-            "password": str(row_values[column_indexes["password"]]).strip() if column_indexes["password"] < len(row_values) and row_values[column_indexes["password"]] else "",
+            "id": str(vals[col_idx["id"]]).strip() if col_idx["id"] < len(vals) and vals[col_idx["id"]] else "",
+            "account": str(vals[col_idx["account"]]).strip() if col_idx["account"] < len(vals) and vals[col_idx["account"]] else "",
+            "password": str(vals[col_idx["password"]]).strip() if col_idx["password"] < len(vals) and vals[col_idx["password"]] else "",
         }
-        if not any([item["id"], item["account"], item["password"]]):
-            continue
-        accounts.append(item)
-
+        if any(item.values()):
+            accounts.append(item)
     if not accounts:
-        raise RuntimeError("Excel 中没有可查询的数据行。")
+        raise RuntimeError("Excel 中没有数据行")
     return accounts
 
 
 def write_template_xlsx(output_path: str) -> str:
-    """生成批量查询模板"""
     from openpyxl import Workbook
-    from pathlib import Path
-
-    path = Path(output_path).expanduser().resolve()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    workbook = Workbook()
-    sheet = workbook.active
-    sheet.title = "批量查询模板"
-    sheet.append(["ID", "账号", "密码"])
-    sheet.append(["示例1", "请填写手机号", "请填写密码"])
-    sheet.column_dimensions["A"].width = 16
-    sheet.column_dimensions["B"].width = 20
-    sheet.column_dimensions["C"].width = 20
-    workbook.save(path)
-    return str(path)
+    p = Path(output_path).expanduser().resolve()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "批量查询模板"
+    ws.append(["ID", "账号", "密码"])
+    ws.append(["示例1", "请填写手机号", "请填写密码"])
+    ws.column_dimensions["A"].width = 16
+    ws.column_dimensions["B"].width = 20
+    ws.column_dimensions["C"].width = 20
+    wb.save(p)
+    return str(p)

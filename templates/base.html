@@ -3,62 +3,22 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{% block title %}YBC 工具箱{% endblock %}</title>
+    <title>{% block title %}红色文化大赛成绩查询{% endblock %}</title>
     <link rel="stylesheet" href="/static/css/style.css">
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧰</text></svg>">
     {% block head %}{% endblock %}
 </head>
 <body>
-    <!-- Top Navigation -->
     <nav class="navbar">
         <div class="navbar-inner">
             <a href="/" class="navbar-brand">
-                <span class="brand-icon">🧰</span>
-                <span class="brand-text">YBC 工具箱</span>
+                <span class="brand-icon">🏆</span>
+                <span class="brand-text">红色文化大赛成绩查询</span>
             </a>
-            <div class="navbar-search">
-                <input type="text" id="global-search" placeholder="搜索工具..." autocomplete="off">
-                <span class="search-icon">🔍</span>
-            </div>
         </div>
     </nav>
-
-    <div class="layout">
-        <!-- Sidebar -->
-        <aside class="sidebar" id="sidebar">
-            <div class="sidebar-header">
-                <span>工具分类</span>
-                <button class="sidebar-toggle" id="sidebar-toggle" aria-label="收起侧栏">‹</button>
-            </div>
-            <ul class="category-list">
-                <li class="category-item active" data-category="all">
-                    <span class="cat-icon">📋</span>
-                    <span class="cat-name">全部工具</span>
-                </li>
-                {% for cat_id, cat in all_tools.items() %}
-                <li class="category-item" data-category="{{ cat_id }}">
-                    <span class="cat-icon">
-                        {% if cat_id == 'selenium' %}🤖{% elif cat_id == 'file_tools' %}📁{% elif cat_id == 'dev_tools' %}⚙️{% elif cat_id == 'network_tools' %}🌐{% else %}🔧{% endif %}
-                    </span>
-                    <span class="cat-name">{{ cat.name }}</span>
-                    <span class="cat-count">{{ cat.tools|length }}</span>
-                </li>
-                {% endfor %}
-            </ul>
-        </aside>
-
-        <!-- Main Content -->
-        <main class="main-content">
-            {% block content %}{% endblock %}
-        </main>
-    </div>
-
-    <!-- Footer -->
-    <footer class="footer">
-        <p>YBC 工具箱 &copy; {{ '2024' }} | 基于 Flask + Python 构建</p>
-    </footer>
-
-    <script src="/static/js/main.js"></script>
+    <main class="main-content">
+        {% block content %}{% endblock %}
+    </main>
     {% block scripts %}{% endblock %}
 </body>
 </html>

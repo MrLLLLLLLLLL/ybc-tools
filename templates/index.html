@@ -1,44 +1,5 @@
 {% extends "base.html" %}
-
-{% block title %}YBC 工具箱 - 在线工具集合{% endblock %}
-
+{% block title %}红色文化大赛成绩查询{% endblock %}
 {% block content %}
-<div class="page-header">
-    <h1>全部工具</h1>
-    <p class="page-desc">精选实用在线工具，提升工作效率</p>
-</div>
-
-<div class="tools-grid" id="tools-grid">
-    {% for cat_id, cat in all_tools.items() %}
-        {% for tool in cat.tools %}
-        <a href="{{ tool.url }}" class="tool-card" data-category="{{ cat_id }}" data-name="{{ tool.title }} {{ tool.description }}">
-            <div class="card-icon">
-                {% if tool.icon == 'braces' %}
-                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 18l6-6-6-6"/><path d="M8 6l-6 6 6 6"/></svg>
-                {% elif tool.icon == 'camera' %}
-                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/></svg>
-                {% elif tool.icon == 'file-text' %}
-                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
-                {% elif tool.icon == 'globe' %}
-                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
-                {% else %}
-                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
-                {% endif %}
-            </div>
-            <div class="card-body">
-                <h3 class="card-title">{{ tool.title }}</h3>
-                <p class="card-desc">{{ tool.description }}</p>
-                <span class="card-category">
-                    {% if cat_id == 'selenium' %}Selenium 自动化{% elif cat_id == 'file_tools' %}文件处理{% elif cat_id == 'dev_tools' %}开发工具{% elif cat_id == 'network_tools' %}网络工具{% else %}{{ cat.name }}{% endif %}
-                </span>
-            </div>
-            <div class="card-arrow">→</div>
-        </a>
-        {% endfor %}
-    {% endfor %}
-</div>
-
-<div class="empty-state" id="empty-state" style="display:none">
-    <p>未找到匹配的工具</p>
-</div>
+<script>window.location.href = '/tool/hswh_score';</script>
 {% endblock %}
