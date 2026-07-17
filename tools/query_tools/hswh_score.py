@@ -62,15 +62,25 @@ class HswhScoreQuery:
     def _get_driver_path(self) -> str:
         if self.driver_path:
             return self.driver_path
+        
+        # 尝试自动下载
+        try:
+            from tools.query_tools.chromedriver_manager import ensure_chromedriver
+            return ensure_chromedriver()
+        except Exception as e:
+            print(f"自动下载 ChromeDriver 失败: {e}")
+        
+        # 回退到常见路径
         candidates = [
             "/usr/bin/chromedriver",
             "/usr/local/bin/chromedriver",
-            "./chromedriver/chromedriver",
+            "/opt/ybc-tools/chromedriver/chromedriver",
         ]
         for candidate in candidates:
             if Path(candidate).exists():
                 return candidate
-        return "chromedriver"
+        
+        raise RuntimeError("未找到 ChromeDriver，请先运行: python3 tools/query_tools/chromedriver_manager.py")
 
     def _make_driver(self, headless: bool = True) -> WebDriver:
         options = Options()
@@ -311,3 +321,64 @@ class HswhScoreQuery:
             return {"success": False, "error": str(e)}
         finally:
             driver.quit()
+
+
+# Helper functions for batch query
+def read_batch_accounts(xlsx_path: str) -> List[Dict[str, str]]:
+    """读取批量查询 Excel"""
+    from openpyxl import load_workbook
+
+    INPUT_COLUMNS = {"ID": "id", "账号": "account", "密码": "password"}
+    workbook = load_workbook(xlsx_path, read_only=True, data_only=True)
+    sheet = workbook.active
+    rows = sheet.iter_rows(values_only=True)
+
+    try:
+        headers = [str(value).strip() if value else "" for value in next(rows)]
+    except StopIteration:
+        raise RuntimeError("Excel 表格为空，请至少填写表头：ID、账号、密码")
+
+    column_indexes = {}
+    for index, header in enumerate(headers):
+        field = INPUT_COLUMNS.get(header)
+        if field:
+            column_indexes[field] = index
+
+    missing = [name for name, field in [("ID", "id"), ("账号", "account"), ("密码", "password")] if field not in column_indexes]
+    if missing:
+        raise RuntimeError(f"Excel 表头缺少列：{', '.join(missing)}。第一行必须包含 ID、账号、密码。")
+
+    accounts = []
+    for line_no, row in enumerate(rows, start=2):
+        row_values = list(row)
+        item = {
+            "id": str(row_values[column_indexes["id"]]).strip() if column_indexes["id"] < len(row_values) and row_values[column_indexes["id"]] else "",
+            "account": str(row_values[column_indexes["account"]]).strip() if column_indexes["account"] < len(row_values) and row_values[column_indexes["account"]] else "",
+            "password": str(row_values[column_indexes["password"]]).strip() if column_indexes["password"] < len(row_values) and row_values[column_indexes["password"]] else "",
+        }
+        if not any([item["id"], item["account"], item["password"]]):
+            continue
+        accounts.append(item)
+
+    if not accounts:
+        raise RuntimeError("Excel 中没有可查询的数据行。")
+    return accounts
+
+
+def write_template_xlsx(output_path: str) -> str:
+    """生成批量查询模板"""
+    from openpyxl import Workbook
+    from pathlib import Path
+
+    path = Path(output_path).expanduser().resolve()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "批量查询模板"
+    sheet.append(["ID", "账号", "密码"])
+    sheet.append(["示例1", "请填写手机号", "请填写密码"])
+    sheet.column_dimensions["A"].width = 16
+    sheet.column_dimensions["B"].width = 20
+    sheet.column_dimensions["C"].width = 20
+    workbook.save(path)
+    return str(path)

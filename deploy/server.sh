@@ -23,15 +23,57 @@ if [ ! -f "$PYTHON" ]; then
 fi
 info "Python: $($PYTHON --version)"
 
-# Always recreate venv to ensure correct Python version
+# Install Chrome and dependencies for headless mode
+if ! command -v google-chrome &>/dev/null && ! command -v google-chrome-stable &>/dev/null; then
+    info "安装 Google Chrome 及无头模式依赖..."
+    
+    if command -v yum &>/dev/null; then
+        # CentOS/RHEL
+        yum install -y wget nss atk at-spi2-atk cups-libs libXcomposite libXdamage libXrandr mesa-libgbm pango alsa-lib gtk3 libdrm libxkbcommon
+        
+        cat > /etc/yum.repos.d/google-chrome.repo << 'REPO'
+[google-chrome]
+name=google-chrome
+baseurl=http://dl.google.com/linux/chrome/rpm/stable/x86_64
+enabled=1
+gpgcheck=1
+gpgkey=https://dl.google.com/linux/linux_signing_key.pub
+REPO
+        yum install -y google-chrome-stable
+        
+    elif command -v apt &>/dev/null; then
+        # Ubuntu/Debian
+        apt update
+        apt install -y wget gnupg2 fonts-liberation libasound2 libatk-bridge2.0-0 libatk1.0-0 libcups2 libdbus-1-3 libdrm2 libgbm1 libgtk-3-0 libnspr4 libnss3 libxcomposite1 libxdamage1 libxrandr2 xdg-utils
+        
+        wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | apt-key add -
+        echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google-chrome.list
+        apt update
+        apt install -y google-chrome-stable
+    fi
+    
+    if command -v google-chrome &>/dev/null; then
+        info "Chrome 已安装: $(google-chrome --version)"
+    else
+        error "Chrome 安装失败"
+    fi
+else
+    info "Chrome 已安装: $(google-chrome --version 2>/dev/null || google-chrome-stable --version 2>/dev/null)"
+fi
+
+# Create venv
 info "创建虚拟环境..."
 rm -rf "$VENV"
 $PYTHON -m venv "$VENV"
 
-# Upgrade pip first, then install dependencies
+# Install dependencies
 info "安装依赖..."
 $VENV/bin/pip install --upgrade pip
 $VENV/bin/pip install -r requirements.txt
+
+# Download ChromeDriver
+info "下载 ChromeDriver..."
+$VENV/bin/python3 tools/query_tools/chromedriver_manager.py
 
 # Create data dirs
 mkdir -p data/uploads data/outputs data/screenshots
